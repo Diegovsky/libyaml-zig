@@ -1,0 +1,9 @@
+single: value
+arr:
+  - Carlinhos
+  - Joana
+  - Pogante
+
+pessoa:
+  nome: Diego Augusto
+  sexo: muito
