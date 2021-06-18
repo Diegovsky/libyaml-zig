@@ -1,3 +1,5 @@
+.vscode
+yaml.h
 zig-cache/
 *.temp
 zig-out/

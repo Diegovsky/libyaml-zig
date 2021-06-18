@@ -1,8 +1,11 @@
-single: value
-arr:
+valor simples: 10
+lista:
   - Carlinhos
   - Joana
   - Pogante
+
+10:
+  - pog
 
 pessoa:
   nome: Diego Augusto
