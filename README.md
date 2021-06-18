@@ -1,26 +1,30 @@
 # libyaml-zig
 Experimental yaml parsing using libyaml for the Zig :zap: Programming Language.
 ## Examples
-hello.yaml:
+language.yaml:
 ```yaml
 language: Zig
 version: 8.0
 ```
 main.zig:
-```zig
-    
+```zig    
 const std = @import("std");
 pub const yaml = @import("yaml.zig");
 
 pub fn main() anyerror!void {
-    var file = try std.fs.cwd().openFile("hello.yaml", .{ .read = true, .write = false });
+    var file = try std.fs.cwd().openFile("language.yaml", .{ .read = true, .write = false });
     defer file.close();
     var parser = try yaml.FileParser.init(std.heap.c_allocator, &file.reader());
     const node = try parser.parseDynamic();
-    const name = parser.Object.get("language").?.Scalar.String;
-    const version = parser.Object.get("language").?.Scalar.Number;
-    std.debug.print("Language name: {s}\nLanguage version: {}\n", .{ name, version });
+    const language = parser.Object.get("language").?.Scalar.String;
+    const version = parser.Object.get("version").?.Scalar.Number;
+    std.debug.print("Language name: {s}\nLanguage version: {}\n", .{ language, version });
 }
+```
+output:
+```
+Language name: Zig
+Language version: 8.0e+1
 ```
 
 ## Building
