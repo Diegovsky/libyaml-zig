@@ -1,2 +1,2 @@
-# libyaml-zig
-Experimental yaml parsing using libyaml
+# zyaml 
+Experimental yaml parsing using libyaml for the Zig :zap: Programming Language.
