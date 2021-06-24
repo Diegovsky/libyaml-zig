@@ -8,7 +8,6 @@ version: 8.0
 ```
 main.zig:
 ```zig
-    
 const std = @import("std");
 pub const yaml = @import("yaml.zig");
 
