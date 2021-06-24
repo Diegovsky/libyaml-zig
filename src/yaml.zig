@@ -1,26 +1,66 @@
-const yaml = @cImport(@cInclude("yaml.h"));
 const std = @import("std");
 const panic = std.debug.panic;
 const Allocator = std.mem.Allocator;
 const MemErr = Allocator.Error;
 
-pub const YamlError = error{ ParserInit, ParsingError, OutOfMemory };
+usingnamespace if (!@import("build_options").customParser)
+    @import("backends/c.zig")
+else
+    @import("backends/custom.zig");
 
-pub const Encoding = enum { Utf8, Utf16LittleEndian, Utf16BigEndian, Any };
+pub const LoaderError = @import("backends/error.zig").LoaderError;
+
 const List = std.ArrayList(Node);
 const Object = std.StringHashMap(Node);
 
 const String = []const u8;
 
-const Scalar = union(enum) {
-    String: String,
-    Number: f64,
+const ScalarType = enum {
+    String,
+    Integer,
+    Float,
+    Bool,
+};
 
-    pub fn fromString(string: String) Scalar {
-        const num = std.fmt.parseFloat(f64, string) catch {
+const Scalar = union(ScalarType) {
+    String: String,
+    Integer: u64,
+    Float: f64,
+    Bool: bool,
+
+    pub fn fromString(string: String, typeHint: ?ScalarType) LoaderError!Scalar {
+        if (typeHint) |stype| {
+            switch (stype) {
+                .Integer => {
+                    if (std.fmt.parseInt(u64, string, 0)) |int| {
+                        return .{ .Integer = int };
+                    } else {
+                        return LoaderError.TypeError;
+                    }
+                },
+                .Float => {
+                    if (std.fmt.parseFloat(f64, string)) |float| {
+                        return .{ .Float = float };
+                    } else {
+                        return LoaderError.TypeError;
+                    }
+                },
+                .Bool => {
+                    if (std.mem.eql(u8, "true", string)) {
+                        return .{ .Bool = true };
+                    } else if (std.mem.eql(u8, "false", string)) {
+                        return .{ .Bool = false };
+                    } else {
+                        return LoaderError.TypeError;
+                    }
+                },
+                else => {
+                    return .{ .String = string };
+                },
+            }
+        } else {
             return .{ .String = string };
-        };
-        return .{ .Number = num };
+        }
     }
 };
 
@@ -34,6 +74,7 @@ const Command = enum {
     Mapping,
     Sequencing,
 };
+pub const Encoding = enum { Utf8, Utf16LittleEndian, Utf16BigEndian, Any };
 const State = union(Command) {
     Mapping: struct {
         object: Object,
@@ -41,32 +82,18 @@ const State = union(Command) {
     },
     Sequencing: List,
 
-    pub fn addNode(self: *@This(), node: Node) YamlError!void {
-        switch(self.*) {
+    pub fn addNode(self: *@This(), node: Node) LoaderError!void {
+        switch (self.*) {
             .Mapping => |*mapping| {
-                if(mapping.name) |name| {
+                if (mapping.name) |name| {
                     try mapping.object.put(name, node);
                     mapping.name = null;
                 } else panic("Expected key but there was none", .{});
             },
             .Sequencing => |*seq| {
                 try seq.append(node);
-            }
+            },
         }
-    }
-};
-
-pub const Mark = struct {
-    index: usize,
-    line: usize,
-    column: usize,
-
-    pub fn fromRaw(raw: yaml.yaml_mark_t) Mark {
-        return .{
-            .index = raw.index,
-            .line = raw.line,
-            .column = raw.column,
-        };
     }
 };
 
@@ -138,94 +165,35 @@ pub const Event = struct {
     }
 };
 
-pub fn Parser(comptime _Reader: type) type {
-    const Reader = *_Reader;
+/// A basic YAML loader. If you just want to parse a string instead, see `stringLoader`.
+pub fn Loader(comptime Reader: type) type {
+    const Parser = parser.Parser(Reader);
     return struct {
-        inner: yaml.yaml_parser_t,
-        wrapper: *ReaderWrapper,
-        _alloc: *Allocator,
+        inner: Parser,
+        allocator: *Allocator,
 
         const Self = @This();
 
-        // A helper struct to pass data to C code. This is because `Reader`
-        //  can be of any size and alignment, also it's `read` function returns a generic error,
-        //  but a pointer to it will be of a predictable size, making this possible.
-        const ReaderWrapper = struct {
-            inner: Reader,
-            const RW = @This();
-
-            pub fn fromReader(reader: Reader) RW {
-                return .{ .inner = reader };
-            }
-            pub fn read_handler_raw(selfopt: ?*c_void, buf: [*c]u8, buflen: usize, readlen: [*c]usize) callconv(.C) c_int {
-                if (selfopt) |selfptr| {
-                    const self = @ptrCast(*RW, @alignCast(@alignOf(RW), selfptr));
-                    const size = self.read_handler(buf[0..buflen]) catch return 0;
-                    readlen.* = size;
-                    return 1;
-                } else {
-                    std.debug.print("!! ReaderWrapper was null !!\n", .{});
-                    unreachable;
-                }
-            }
-            pub fn read_handler(self: *RW, buf: []u8) anyerror!u64 {
-                return self.inner.read(buf);
-            }
-        };
-        // reader must outlive this.
-        pub fn init(alloc: *Allocator, reader: Reader) YamlError!Self {
-            var self: Self = .{ .inner = undefined, .wrapper = undefined, ._alloc = alloc };
-            if (yaml.yaml_parser_initialize(&self.inner) == 0) {
-                return YamlError.ParserInit;
-            }
-            self.wrapper = try alloc.create(ReaderWrapper);
-            self.wrapper.* = ReaderWrapper.fromReader(reader);
-            yaml.yaml_parser_set_input(
-                &self.inner,
-                ReaderWrapper.read_handler_raw,
-                @ptrCast(*c_void, self.wrapper),
-            );
-            return self;
+        fn init(allocator: *Allocator, reader: Reader) Self {
+            return Self { .allocator = allocator, .inner = try Parser.init(allocator, reader) };
         }
-
-        pub fn deinit(self: *Self) void {
-            yaml.yaml_parser_delete(self.inner);
-            self._alloc.destroy(self.wrapper);
-        }
-        // You must call Event.deinit if this call is successful.
-        pub fn nextEvent(self: *Self) YamlError!Event {
-            var event: yaml.yaml_event_t = undefined;
-            if (yaml.yaml_parser_parse(&self.inner, &event) == 0) {
-                return YamlError.ParsingError;
-            }
-            const ev = Event.fromRaw(&event, self._alloc);
-            yaml.yaml_event_delete(&event);
-            return ev;
-        }
-        // This function returns the intermediate representation of YAML.
-        // This is useful when you don't know the data beforehand.
-        fn parse(self: *Self, command: ?Command) YamlError!Node {
-            var state: ?State = if(command) |cmd| switch (cmd) {
-                .Mapping => State { .Mapping = .{ .object = Object.init(self._alloc), .name = null } },
-                .Sequencing => State { .Sequencing = List.init(self._alloc)},
+        fn parse(self: *Self, command: ?Command) LoaderError!Node {
+            var state: ?State = if (command) |cmd| switch (cmd) {
+                .Mapping => State{ .Mapping = .{ .object = Object.init(self.allocator), .name = null } },
+                .Sequencing => State{ .Sequencing = List.init(self.allocator) },
             } else null;
-            while(true) {
-                const evt = try self.nextEvent();
-                if(false) {
-                    switch(evt.etype) {
-                        .ScalarEvent => |sc|  std.debug.print("Scalar Event: {s}\n", .{sc.value}),
-                        else => std.debug.print("Event: {s}\n", .{@tagName(evt.etype)}),
-                    }
-                }
+            var evt: Event = undefined;
+            while (true) {
+                evt = try self.inner.nextEvent();
                 switch (evt.etype) {
                     .MappingStartEvent => |mse| {
                         const obj = try self.parse(.Mapping);
-                        if(state) |*st| {
+                        if (state) |*st| {
                             try st.addNode(obj);
                         } else return obj;
                     },
                     .MappingEndEvent => |mee| {
-                        if(state) |st| switch (st) {
+                        if (state) |st| switch (st) {
                             .Mapping => |map| {
                                 if (map.name) |name| panic("Mapping stopped before key \'{s}\' could receive a value", .{name});
                                 return Node{ .Object = map.object };
@@ -235,30 +203,30 @@ pub fn Parser(comptime _Reader: type) type {
                     },
                     .SequenceStartEvent => |sse| {
                         const seq = try self.parse(.Sequencing);
-                        if(state) |*st| {
+                        if (state) |*st| {
                             try st.addNode(seq);
                         } else return seq;
                     },
                     .ScalarEvent => |scalar| {
-                        if(state) |*st| {
+                        if (state) |*st| {
                             // If we're currently mapping and there is no name yet,
                             //  store this scalar to be used as a key.
-                            switch(st.*) {
-                                .Mapping => |*map| if(map.name == null) {
+                            switch (st.*) {
+                                .Mapping => |*map| if (map.name == null) {
                                     map.name = scalar.value;
                                     continue;
                                 },
                                 else => {},
                             }
-                            try st.addNode(.{.Scalar = Scalar.fromString(scalar.value)});
-                        } else return Node {.Scalar = Scalar.fromString(scalar.value)};
+                            try st.addNode(.{ .Scalar = Scalar.fromString(scalar.value) });
+                        } else return Node{ .Scalar = Scalar.fromString(scalar.value) };
                     },
                     .SequenceEndEvent => {
-                        if(state) |st| {
-                            switch(st) {
-                                .Sequencing => |seq| return Node{ .List =  seq },
+                        if (state) |st| {
+                            switch (st) {
+                                .Sequencing => |seq| return Node{ .List = seq },
                                 .Mapping => panic("Received sequence stop event while mapping", .{}),
-                            } 
+                            }
                         } else panic("Impossible to end sequencing; nothing is supposed to be happening", .{});
                     },
                     else => {},
@@ -266,12 +234,31 @@ pub fn Parser(comptime _Reader: type) type {
             }
             unreachable;
         }
-        pub fn parseDynamic(self: *Self) YamlError!Node {
+        // This function returns the intermediate representation of YAML.
+        // This is useful when you don't know the data beforehand.
+        pub fn parseDynamic(self: *Self) LoaderError!Node {
             return self.parse(null);
+        }
+        pub fn deinit(self: Self) void {
+            self.inner.deinit();
         }
     };
 }
 
-// Just a convenience definition for `File`s. For more information,
-//  go to `Parser`.
-pub const FileParser = Parser(std.fs.File.Reader);
+pub const StringLoader = Loader(std.io.FixedBufferStream(String));
+pub fn stringLoader(allocator: *Allocator, string: String) !StringLoader {
+    const buf = std.io.fixedBufferStream(string);
+    return StringLoader.init(allocator, buf);
+}
+
+test "Load String" {
+    const string = "name: Bob\nage: 100";
+    var strlod = try stringLoader(std.testing.allocator, string);
+    defer strlod.deinit();
+    const result = try strlod.parseDynamic();
+    const name = result.Object.get("name").?.Scalar.String;
+    const age = result.Object.get("age").?.Scalar.String;
+    try std.testing.expectEqualStrings("Bob", name);
+    try std.testing.expectEqualStrings("100", age);
+}
+
