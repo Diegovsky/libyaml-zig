@@ -102,7 +102,7 @@ pub fn Loader(comptime Reader: type) type {
         fn init(allocator: *Allocator, reader: Reader) ParserError!Self {
             return Self { .allocator = allocator, .inner = try Parser.init(allocator, reader) };
         }
-        fn parse(self: *Self, command: ?Command, typeHint: ?ScalarType) YamlError!Node {
+        fn parse(self: *Self, command: ?Command) YamlError!Node {
             var state: ?State = if (command) |cmd| switch (cmd) {
                 .Mapping => State{ .Mapping = .{ .object = Object.init(self.allocator), .name = null } },
                 .Sequencing => State{ .Sequencing = List.init(self.allocator) },
@@ -111,13 +111,13 @@ pub fn Loader(comptime Reader: type) type {
             while (true) {
                 evt = try self.inner.nextEvent();
                 switch (evt.etype) {
-                    .MappingStartEvent => |mse| {
+                    .MappingStartEvent => {
                         const obj = try self.parse(.Mapping);
                         if (state) |*st| {
                             try st.addNode(obj);
                         } else return obj;
                     },
-                    .MappingEndEvent => |mee| {
+                    .MappingEndEvent => {
                         if (state) |st| switch (st) {
                             .Mapping => |map| {
                                 if (map.name) |name| panic("Mapping stopped before key \'{s}\' could receive a value", .{name});
@@ -126,7 +126,7 @@ pub fn Loader(comptime Reader: type) type {
                             else => |cur| panic("Current state is '{s}', expected '{s}'", .{ @tagName(cur), @tagName(.Mapping) }),
                         } else panic("Impossible to end mapping; nothing is supposed to be happening", .{});
                     },
-                    .SequenceStartEvent => |sse| {
+                    .SequenceStartEvent => {
                         const seq = try self.parse(.Sequencing);
                         if (state) |*st| {
                             try st.addNode(seq);

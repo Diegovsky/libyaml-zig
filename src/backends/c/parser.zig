@@ -34,11 +34,12 @@ pub fn Parser(comptime Reader: type) type {
     // `buff` is a pointer to a byte buffer of size `buflen`.
     //        This is were we should paste the data read from `context`.
     // `bytes_read` is a pointer in which we write the actual number of bytes that were read.
-    fn handler(maybe_data: ?*c_void, maybe_buff: ?[*]u8, buflen: usize, bytes_read: ?*usize) callconv(.C) c_int {
+    // TODO: change bytes_read to ?*usize. It is not possible right now due to a compiler bug.
+    fn handler(maybe_data: ?*c_void, maybe_buff: ?[*]u8, buflen: usize, bytes_read: [*c]usize) callconv(.C) c_int {
         if (maybe_data) |data| {
             if(maybe_buff) |buff| {
-                var ctx = @ptrCast(*Reader, @alignCast(@alignOf(Reader), data) );
-                if (ctx.readAll(buff[0..buflen])) |br| {
+                var ctx = @ptrCast(*align(@alignOf(Reader)) Reader, data );
+                if (ctx.*.readAll(buff[0..buflen])) |br| {
                     bytes_read.?.* = br;
                     return 1;
                 } else |_| {
@@ -51,7 +52,8 @@ pub fn Parser(comptime Reader: type) type {
     pub fn nextEvent(self: *Self) common.ParserError!common.Event {
         var raw_event: CEvent = undefined;
         if (c.yaml_parser_parse(self.raw, &raw_event) == 0) {}
-        const etype = switch (raw_event.*.type) {
+        defer c.yaml_event_delete(&raw_event);
+        const etype = switch (raw_event.type) {
             .YAML_NO_EVENT => .NoEvent,
             .YAML_STREAM_START_EVENT => EventType{ .StreamStartEvent = switch (raw_event.*.data.stream_start.encoding) {
                 .YAML_UTF8_ENCODING => .Utf8,

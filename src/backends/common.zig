@@ -1,5 +1,6 @@
-pub const ParserError = error{ ParserInit, AlreadySet, ReadingFailed, ParsingError, InternalError, OutOfMemory, TypeError };
-pub const LoaderError = error{Validation};
+pub const OOM = Allocator.Error;
+pub const ParserError = error{ ParserInit, AlreadySet, ReadingFailed, ParsingError, InternalError, TypeError } || OOM;
+pub const LoaderError = error{Validation} || OOM;
 pub const YamlError = LoaderError || ParserError;
 const Allocator = @import("std").mem.Allocator;
 
