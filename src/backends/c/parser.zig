@@ -26,7 +26,7 @@ pub fn Parser(comptime Reader: type) type {
         errdefer c.yaml_parser_delete(raw);
 
         c.yaml_parser_set_input(raw, Self.handler, @ptrCast(?*void, reader ));
-        return .{.raw = raw, .allocator = allocator, };
+        return Self {.raw = raw, .allocator = allocator, };
     }
         
     // This function is called by libyaml to get more data from a buffer.
@@ -34,8 +34,7 @@ pub fn Parser(comptime Reader: type) type {
     // `buff` is a pointer to a byte buffer of size `buflen`.
     //        This is were we should paste the data read from `context`.
     // `bytes_read` is a pointer in which we write the actual number of bytes that were read.
-    // TODO: change bytes_read to ?*usize. It is not possible right now due to a compiler bug.
-    fn handler(maybe_data: ?*c_void, maybe_buff: ?[*]u8, buflen: usize, bytes_read: [*c]usize) callconv(.C) c_int {
+    fn handler(maybe_data: ?*c_void, maybe_buff: ?[*]u8, buflen: usize, bytes_read: ?*usize) callconv(.C) c_int {
         if (maybe_data) |data| {
             if(maybe_buff) |buff| {
                 var ctx = @ptrCast(*align(@alignOf(Reader)) Reader, data );
