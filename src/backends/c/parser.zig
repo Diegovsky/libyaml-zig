@@ -15,7 +15,7 @@ pub fn Parser(comptime Reader: type) type {
 
     const Self = @This();
 
-    pub fn init(allocator: *Allocator, reader: Reader) ParserError!Self {
+    pub fn init(allocator: *Allocator, reader: Reader) common.ParserError!Self {
         var raw = try allocator.create(CParser);
         errdefer allocator.destroy(raw);
 
@@ -25,7 +25,7 @@ pub fn Parser(comptime Reader: type) type {
         }
         errdefer c.yaml_parser_delete(raw);
 
-        c.yaml_parser_set_input(self.raw, reader, Self.handler);
+        c.yaml_parser_set_input(raw, Self.handler, @ptrCast(?*void, reader ));
         return .{.raw = raw, .allocator = allocator, };
     }
         
@@ -34,20 +34,21 @@ pub fn Parser(comptime Reader: type) type {
     // `buff` is a pointer to a byte buffer of size `buflen`.
     //        This is were we should paste the data read from `context`.
     // `bytes_read` is a pointer in which we write the actual number of bytes that were read.
-    fn handler(maybe_data: ?*c_void, buff: [*]u8, buflen: usize, bytes_read: *usize) callconv(.C) c_int {
+    fn handler(maybe_data: ?*c_void, maybe_buff: ?[*]u8, buflen: usize, bytes_read: ?*usize) callconv(.C) c_int {
         if (maybe_data) |data| {
-            var ctx = @alignCast(@alignOf(context), data);
-            if (ctx.readAll(buf[0..buflen])) |br| {
-                bytes_read.* = br;
-                return 1;
-            } else {
-                return 0;
+            if(maybe_buff) |buff| {
+                var ctx = @ptrCast(*Reader, @alignCast(@alignOf(Reader), data) );
+                if (ctx.readAll(buff[0..buflen])) |br| {
+                    bytes_read.?.* = br;
+                    return 1;
+                } else |_| {
+                    return 0;
+                }
             }
-        } else {
-            return 0;
-        }
+        } 
+        return 0;
     }
-    pub fn nextEvent(self: *Self) ParserError!events.Event {
+    pub fn nextEvent(self: *Self) common.ParserError!common.Event {
         var raw_event: CEvent = undefined;
         if (c.yaml_parser_parse(self.raw, &raw_event) == 0) {}
         const etype = switch (raw_event.*.type) {
@@ -86,7 +87,7 @@ pub fn Parser(comptime Reader: type) type {
     }
     pub fn deinit(self: Self) void {
         c.yaml_parser_delete(self.raw);
-        self.allocator.free(self.raw);
+        self.allocator.destroy(self.raw);
     }
     };
 }
