@@ -20,7 +20,7 @@ pub const yaml = @import("yaml.zig");
 pub fn main() anyerror!void {
     var file = try std.fs.cwd().openFile("language.yaml", .{ .read = true, .write = false });
     defer file.close();
-    var parser = try yaml.FileParser.init(std.heap.c_allocator, &file.reader());
+    var parser = try yaml.Loader(std.io.File.Reader).init(std.heap.c_allocator, &file.reader());
     const node = try parser.parseDynamic();
     const language = parser.Object.get("language").?.Scalar.String;
     const version = parser.Object.get("version").?.Scalar.Number;
@@ -40,7 +40,7 @@ Language version: 8.0e+1
 To build libyaml-zig you need to have
 
 - [libyaml](https://github.com/yaml/libyaml)  
-- Zig 8.0 stable
+- Zig Master
 
 ### How to build
 
