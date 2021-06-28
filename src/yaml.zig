@@ -207,9 +207,6 @@ pub fn Loader(comptime Reader: type) type {
             }
             self.nodes.deinit();
         }
-        pub fn deinit(self: Self) void {
-            self.inner.deinit();
-        }
     };
 }
 
