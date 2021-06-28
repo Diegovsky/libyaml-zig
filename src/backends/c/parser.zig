@@ -10,85 +10,87 @@ const CError = c.yaml_error_type_t;
 /// so be careful with this.
 pub fn Parser(comptime Reader: type) type {
     return struct {
-    raw: *CParser,
-    allocator: *Allocator,
+        raw: *CParser,
+        allocator: *Allocator,
+        _reader: Reader,
 
-    const Self = @This();
+        const Self = @This();
 
-    pub fn init(allocator: *Allocator, reader: Reader) common.ParserError!Self {
-        var raw = try allocator.create(CParser);
-        errdefer allocator.destroy(raw);
+        pub fn init(allocator: *Allocator, reader: Reader) common.ParserError!Self {
+            var raw = try allocator.create(CParser);
+            errdefer allocator.destroy(raw);
 
-        // Checking if initialization failed.
-        if (c.yaml_parser_initialize(raw) == 0) {
-            return error.OutOfMemory;
-        }
-        errdefer c.yaml_parser_delete(raw);
-
-        c.yaml_parser_set_input(raw, Self.handler, @ptrCast(?*void, reader ));
-        return Self {.raw = raw, .allocator = allocator, };
-    }
-        
-    // This function is called by libyaml to get more data from a buffer.
-    // `data` is a pointer we give to libyaml when `yaml_parser_set_input` is called.
-    // `buff` is a pointer to a byte buffer of size `buflen`.
-    //        This is were we should paste the data read from `context`.
-    // `bytes_read` is a pointer in which we write the actual number of bytes that were read.
-    fn handler(maybe_data: ?*c_void, maybe_buff: ?[*]u8, buflen: usize, bytes_read: ?*usize) callconv(.C) c_int {
-        if (maybe_data) |data| {
-            if(maybe_buff) |buff| {
-                var ctx = @ptrCast(*align(@alignOf(Reader)) Reader, data );
-                if (ctx.*.readAll(buff[0..buflen])) |br| {
-                    bytes_read.?.* = br;
-                    return 1;
-                } else |_| {
-                    return 0;
-                }
+            // Checking if initialization failed.
+            if (c.yaml_parser_initialize(raw) == 0) {
+                return error.OutOfMemory;
             }
-        } 
-        return 0;
-    }
-    pub fn nextEvent(self: *Self) common.ParserError!common.Event {
-        var raw_event: CEvent = undefined;
-        if (c.yaml_parser_parse(self.raw, &raw_event) == 0) {}
-        defer c.yaml_event_delete(&raw_event);
-        const etype = switch (raw_event.type) {
-            .YAML_NO_EVENT => .NoEvent,
-            .YAML_STREAM_START_EVENT => EventType{ .StreamStartEvent = switch (raw_event.*.data.stream_start.encoding) {
-                .YAML_UTF8_ENCODING => .Utf8,
-                .YAML_UTF16LE_ENCODING => .Utf16LittleEndian,
-                .YAML_UTF16BE_ENCODING => .Utf16BigEndian,
-                else => .Any,
-            } },
-            .YAML_STREAM_END_EVENT => .StreamEndEvent,
-            .YAML_DOCUMENT_START_EVENT => blk: {
-                const Tp = @TypeOf((EventType{ .DocumentStartEvent = undefined }).DocumentStartEvent.version);
-                const version: Tp = if (raw_event.*.data.document_start.version_directive) |_ver| .{
-                    .major = @intCast(u32, _ver.*.major),
-                    .minor = @intCast(u32, _ver.*.minor),
-                } else null;
-                break :blk EventType{ .DocumentStartEvent = .{ .version = version } };
-            },
-            .YAML_DOCUMENT_END_EVENT => .DocumentEndEvent,
-            .YAML_ALIAS_EVENT => unreachable,
-            .YAML_SCALAR_EVENT => EventType{ .ScalarEvent = .{
-                .value = try alloc.dupe(u8, raw_event.*.data.scalar.value[0..raw_event.*.data.scalar.length]),
-            } },
-            .YAML_SEQUENCE_START_EVENT => .SequenceStartEvent,
-            .YAML_SEQUENCE_END_EVENT => .SequenceEndEvent,
-            .YAML_MAPPING_START_EVENT => .MappingStartEvent,
-            .YAML_MAPPING_END_EVENT => .MappingEndEvent,
-            else => unreachable,
-        };
-        return Event{
-            .start = Mark.fromRaw(raw_event.*.start_mark),
-            .end = Mark.fromRaw(raw_event.*.end_mark),
-            .etype = etype,
-        };
-    }
-    pub fn deinit(self: Self) void {
-        c.yaml_parser_delete(self.raw);
-        self.allocator.destroy(self.raw);
-    }
+            errdefer c.yaml_parser_delete(raw);
+
+            std.debug.print("\nPtr at init: {x}    Buf at init: {*}\n", .{@ptrToInt(reader ), reader.*.context.buffer});
+            const c_handler_t = fn(?*c_void, ?[*]u8, usize, ?*usize) callconv(.C) c_int ;
+            c.yaml_parser_set_input(raw, @ptrCast(c_handler_t, Self.handler), @ptrCast(*c_void, reader));
+            return Self{
+                .raw = raw,
+                .allocator = allocator,
+                ._reader = reader,
+            };
+        }
+
+        // This function is called by libyaml to get more data from a buffer.
+        // `data` is a pointer we give to libyaml when `yaml_parser_set_input` is called.
+        // `buff` is a pointer to a byte buffer of size `buflen`.
+        //        This is were we should paste the data read from `context`.
+        // `bytes_read` is a pointer in which we write the actual number of bytes that were read.
+        fn handler(data: *c_void, buff: [*]u8, buflen: usize, bytes_read: *usize) callconv(.C) c_int {
+            var reader = @ptrCast(Reader, @alignCast(@alignOf(Reader), data));
+            if (reader.read(buff[0..buflen])) |br| {
+                bytes_read.* = br;
+                return 1;
+            } else |_| {}
+            return 0;
+        }
+        pub fn nextEvent(self: *Self) common.ParserError!common.Event {
+            var raw_event: CEvent = undefined;
+            std.debug.print("i dont even know anymore {*} {}\n", .{self._reader.*.context.buffer, self._reader.*.context.pos});
+            if (c.yaml_parser_parse(self.raw, &raw_event) == 0) {
+                return common.ParserError.ReadingFailed;
+            }
+            defer c.yaml_event_delete(&raw_event);
+            const etype = switch (raw_event.type) {
+                c.YAML_NO_EVENT => .NoEvent,
+                c.YAML_STREAM_START_EVENT => common.EventType{ .StreamStartEvent = switch (raw_event.data.stream_start.encoding) {
+                    c.YAML_UTF8_ENCODING => .Utf8,
+                    c.YAML_UTF16LE_ENCODING => .Utf16LittleEndian,
+                    c.YAML_UTF16BE_ENCODING => .Utf16BigEndian,
+                    else => .Any,
+                } },
+                c.YAML_STREAM_END_EVENT => .StreamEndEvent,
+                c.YAML_DOCUMENT_START_EVENT => blk: {
+                    const version = if (raw_event.data.document_start.version_directive) |_ver| common.Version {
+                        .major = @intCast(u32, _ver.*.major),
+                        .minor = @intCast(u32, _ver.*.minor),
+                    } else null;
+                    break :blk common.EventType{ .DocumentStartEvent = .{ .version = version } };
+                },
+                c.YAML_DOCUMENT_END_EVENT => .DocumentEndEvent,
+                c.YAML_ALIAS_EVENT => unreachable,
+                c.YAML_SCALAR_EVENT => common.EventType{ .ScalarEvent = .{
+                    .value = try self.allocator.dupe(u8, raw_event.data.scalar.value[0..raw_event.data.scalar.length]),
+                } },
+                c.YAML_SEQUENCE_START_EVENT => .SequenceStartEvent,
+                c.YAML_SEQUENCE_END_EVENT => .SequenceEndEvent,
+                c.YAML_MAPPING_START_EVENT => .MappingStartEvent,
+                c.YAML_MAPPING_END_EVENT => .MappingEndEvent,
+                else => unreachable,
+            };
+            return common.Event{
+                .etype = etype,
+                .allocator = self.allocator,
+            };
+        }
+        pub fn deinit(self: Self) void {
+            c.yaml_parser_delete(self.raw);
+            self.allocator.destroy(self.raw);
+        }
     };
 }

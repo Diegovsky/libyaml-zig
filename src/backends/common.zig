@@ -1,10 +1,14 @@
 pub const OOM = Allocator.Error;
 pub const ParserError = error{ ParserInit, AlreadySet, ReadingFailed, ParsingError, InternalError, TypeError } || OOM;
-pub const LoaderError = error{Validation} || OOM;
+pub const LoaderError = error{UnexpectedType} || OOM;
 pub const YamlError = LoaderError || ParserError;
 const Allocator = @import("std").mem.Allocator;
 
 const String = []const u8;
+pub const Version = struct {
+    major: u32,
+    minor: u32,
+};
 
 pub const Encoding = enum { Utf8, Utf16LittleEndian, Utf16BigEndian, Any };
 pub const EventType = union(enum) {
@@ -12,10 +16,7 @@ pub const EventType = union(enum) {
     StreamStartEvent: Encoding,
     StreamEndEvent: void,
     DocumentStartEvent: struct {
-        version: ?struct {
-            major: u32,
-            minor: u32,
-        },
+        version: ?Version
     },
     DocumentEndEvent: void,
     ScalarEvent: struct { value: String },

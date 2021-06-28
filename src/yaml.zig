@@ -27,33 +27,33 @@ const Scalar = union(ScalarType) {
             switch (stype) {
                 .Integer => {
                     if (std.fmt.parseInt(u64, string, 0)) |int| {
-                        return .{ .Integer = int };
-                    } else {
-                        return LoaderError.TypeError;
+                        return Scalar{ .Integer = int };
+                    } else |_| {
+                        return LoaderError.UnexpectedType;
                     }
                 },
                 .Float => {
                     if (std.fmt.parseFloat(f64, string)) |float| {
-                        return .{ .Float = float };
-                    } else {
-                        return LoaderError.TypeError;
+                        return Scalar{ .Float = float };
+                    } else |_| {
+                        return LoaderError.UnexpectedType;
                     }
                 },
                 .Bool => {
                     if (std.mem.eql(u8, "true", string)) {
-                        return .{ .Bool = true };
+                        return Scalar{ .Bool = true };
                     } else if (std.mem.eql(u8, "false", string)) {
-                        return .{ .Bool = false };
+                        return Scalar{ .Bool = false };
                     } else {
-                        return LoaderError.TypeError;
+                        return LoaderError.UnexpectedType;
                     }
                 },
                 else => {
-                    return .{ .String = string };
+                    return Scalar{ .String = string };
                 },
             }
         } else {
-            return .{ .String = string };
+            return Scalar{ .String = string };
         }
     }
 };
@@ -100,15 +100,17 @@ pub fn Loader(comptime Reader: type) type {
         const Self = @This();
 
         fn init(allocator: *Allocator, reader: Reader) ParserError!Self {
-            return Self { .allocator = allocator, .inner = try Parser.init(allocator, reader) };
+            return Self{ .allocator = allocator, .inner = try Parser.init(allocator, reader) };
         }
         fn parse(self: *Self, command: ?Command) YamlError!Node {
             var state: ?State = if (command) |cmd| switch (cmd) {
                 .Mapping => State{ .Mapping = .{ .object = Object.init(self.allocator), .name = null } },
                 .Sequencing => State{ .Sequencing = List.init(self.allocator) },
             } else null;
+            std.debug.print("i dont even know anymore {*} {}\n", .{self.inner._reader.*.context.buffer, self.inner._reader.*.context.pos});
             var evt: Event = undefined;
             while (true) {
+                std.debug.print("asasjas\n", .{});
                 evt = try self.inner.nextEvent();
                 switch (evt.etype) {
                     .MappingStartEvent => {
@@ -143,8 +145,8 @@ pub fn Loader(comptime Reader: type) type {
                                 },
                                 else => {},
                             }
-                            try st.addNode(.{ .Scalar = Scalar.fromString(scalar.value, typeHint) });
-                        } else return Node{ .Scalar = Scalar.fromString(scalar.value, typeHint) };
+                            try st.addNode(.{ .Scalar = try Scalar.fromString(scalar.value, null) });
+                        } else return Node{ .Scalar = try Scalar.fromString(scalar.value, null) };
                     },
                     .SequenceEndEvent => {
                         if (state) |st| {
@@ -178,12 +180,16 @@ pub fn stringLoader(allocator: *Allocator, string: String) !StringLoader {
 
 test "Load String" {
     const string = "name: Bob\nage: 100";
-    var strlod = try stringLoader(std.testing.allocator, string);
-    defer strlod.deinit();
-    const result = try strlod.parseDynamic();
+    std.debug.print("\n\n", .{});
+    var buf = std.io.fixedBufferStream(string);
+    var reader = buf.reader(); 
+    std.debug.print("Pos: {},    Buf at test: {*}\n", .{reader.context.pos, reader.context.buffer});
+    var stringloader = try StringLoader.init(std.testing.allocator, &reader);
+    std.debug.print("Pos: {}      Ptr at test {x}\n", .{reader.context.pos, @ptrToInt(&reader)});
+    // defer stringloader.deinit();
+    const result = try stringloader.parseDynamic();
     const name = result.Object.get("name").?.Scalar.String;
     const age = result.Object.get("age").?.Scalar.String;
     try std.testing.expectEqualStrings("Bob", name);
     try std.testing.expectEqualStrings("100", age);
 }
-
