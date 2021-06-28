@@ -22,7 +22,7 @@ const Scalar = union(ScalarType) {
     Float: f64,
     Bool: bool,
 
-    pub fn fromString(string: String, typeHint: ?ScalarType) LoaderError!Scalar {
+    pub fn fromString(string: String, typeHint: ?ScalarType) LoaderError!@This() {
         if (typeHint) |stype| {
             switch (stype) {
                 .Integer => {
@@ -56,12 +56,41 @@ const Scalar = union(ScalarType) {
             return Scalar{ .String = string };
         }
     }
+    pub fn deinit(self: *@This(), allocator: *Allocator) void {
+        switch(self.*) {
+            .String => |st| allocator.free(st),
+            else => {}
+        }
+    }
 };
 
 const Node = union(enum) {
     Scalar: Scalar,
     List: List,
     Object: Object,
+
+    pub fn deinit(self: *@This(), allocator: *Allocator) void {
+        switch(self.*) {
+            .Scalar => |*sc| sc.deinit(allocator),
+            .List => |*ls| {
+                for(ls.items) |*node| {
+                    node.deinit(allocator);
+                }
+                ls.deinit();
+            },
+            .Object => |*obj| {
+                var iter = obj.iterator();
+                while(iter.next()) |entry| {
+                    var k = entry.key_ptr;
+                    var v = entry.value_ptr;
+                    allocator.free(k.*);
+                    v.deinit(allocator);
+                }
+                obj.deinit();
+            }
+            
+        }
+    }
 };
 
 const Command = enum {
@@ -96,11 +125,15 @@ pub fn Loader(comptime Reader: type) type {
     return struct {
         inner: Parser,
         allocator: *Allocator,
+        nodes: List,
 
         const Self = @This();
 
         fn init(allocator: *Allocator, reader: Reader) ParserError!Self {
-            return Self{ .allocator = allocator, .inner = try Parser.init(allocator, reader) };
+            var par =  try Parser.init(allocator, reader) ;
+            errdefer par.deinit();
+            var ndlist = List.init(allocator);
+            return Self{ .allocator = allocator, .inner = par, .nodes = ndlist};
         }
         fn parse(self: *Self, command: ?Command) YamlError!Node {
             var state: ?State = if (command) |cmd| switch (cmd) {
@@ -159,32 +192,52 @@ pub fn Loader(comptime Reader: type) type {
             }
             unreachable;
         }
-        // This function returns the intermediate representation of YAML.
-        // This is useful when you don't know the data beforehand.
+        /// Returns a dynamic representation of YAML.
+        /// This is useful when you don't know the data beforehand.
+        /// This is freed when `Parser.deinit` is called.
         pub fn parseDynamic(self: *Self) YamlError!Node {
-            return self.parse(null);
+            var nd = try self.parse(null);
+            try self.nodes.append(nd);
+            return nd;
         }
-        pub fn deinit(self: Self) void {
+        pub fn deinit(self: *Self) void {
             self.inner.deinit();
+            for(self.nodes.items) |*node| {
+                node.deinit(self.allocator);
+            }
+            self.nodes.deinit();
         }
     };
 }
 
 pub const StringLoader = Loader(*std.io.FixedBufferStream(String).Reader);
-pub fn stringLoader(allocator: *Allocator, string: String) !StringLoader {
-    var buf = std.io.fixedBufferStream(string);
-    return StringLoader.init(allocator, &buf.reader());
-}
 
 test "Load String" {
     const string = "name: Bob\nage: 100";
     var buf = std.io.fixedBufferStream(string);
-    var reader = buf.reader(); 
-    var stringloader = try StringLoader.init(std.testing.allocator, &reader);
-    // defer stringloader.deinit();
+    var stringloader = try StringLoader.init(std.testing.allocator, &buf.reader());
+    defer stringloader.deinit();
     const result = try stringloader.parseDynamic();
     const name = result.Object.get("name").?.Scalar.String;
     const age = result.Object.get("age").?.Scalar.String;
     try std.testing.expectEqualStrings("Bob", name);
     try std.testing.expectEqualStrings("100", age);
+}
+
+test "Root is List" {
+    const string = 
+    \\- apple
+    \\- pear
+    \\- grapes
+    \\- starfruit
+    ;
+    var buf = std.io.fixedBufferStream(string);
+    var stringloader = try StringLoader.init(std.testing.allocator, &buf.reader());
+    defer stringloader.deinit();
+    const result = try stringloader.parseDynamic();
+    try std.testing.expect(result == .List);
+    const fruits = result.List;
+    inline for(.{"apple", "pear", "grapes", "starfruit"}) |name, i| {
+        try std.testing.expectEqualStrings(fruits.items[i].Scalar.String, name);
+    }
 }
