@@ -26,9 +26,7 @@ pub fn Parser(comptime Reader: type) type {
             }
             errdefer c.yaml_parser_delete(raw);
 
-            std.debug.print("\nPtr at init: {x}    Buf at init: {*}\n", .{@ptrToInt(reader ), reader.*.context.buffer});
-            const c_handler_t = fn(?*c_void, ?[*]u8, usize, ?*usize) callconv(.C) c_int ;
-            c.yaml_parser_set_input(raw, @ptrCast(c_handler_t, Self.handler), @ptrCast(*c_void, reader));
+            c.yaml_parser_set_input(raw, Self.handler, @ptrCast(?*c_void, reader));
             return Self{
                 .raw = raw,
                 .allocator = allocator,
@@ -41,17 +39,22 @@ pub fn Parser(comptime Reader: type) type {
         // `buff` is a pointer to a byte buffer of size `buflen`.
         //        This is were we should paste the data read from `context`.
         // `bytes_read` is a pointer in which we write the actual number of bytes that were read.
-        fn handler(data: *c_void, buff: [*]u8, buflen: usize, bytes_read: *usize) callconv(.C) c_int {
-            var reader = @ptrCast(Reader, @alignCast(@alignOf(Reader), data));
-            if (reader.read(buff[0..buflen])) |br| {
-                bytes_read.* = br;
-                return 1;
-            } else |_| {}
+        fn handler(maybe_data: ?*c_void, maybe_buff: ?[*]u8, buflen: usize, bytes_read: ?*usize) callconv(.C) c_int {
+            if (maybe_data) |data| {
+                if (maybe_buff) |buff| {
+                    var reader = @ptrCast(Reader, @alignCast(@alignOf(Reader), data));
+                    if (reader.read(buff[0..buflen])) |br| {
+                        bytes_read.?.* = br;
+                        return 1;
+                    } else |_| {
+                        return 0;
+                    }
+                }
+            }
             return 0;
         }
         pub fn nextEvent(self: *Self) common.ParserError!common.Event {
             var raw_event: CEvent = undefined;
-            std.debug.print("i dont even know anymore {*} {}\n", .{self._reader.*.context.buffer, self._reader.*.context.pos});
             if (c.yaml_parser_parse(self.raw, &raw_event) == 0) {
                 return common.ParserError.ReadingFailed;
             }

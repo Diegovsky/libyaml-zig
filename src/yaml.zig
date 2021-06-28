@@ -107,10 +107,8 @@ pub fn Loader(comptime Reader: type) type {
                 .Mapping => State{ .Mapping = .{ .object = Object.init(self.allocator), .name = null } },
                 .Sequencing => State{ .Sequencing = List.init(self.allocator) },
             } else null;
-            std.debug.print("i dont even know anymore {*} {}\n", .{self.inner._reader.*.context.buffer, self.inner._reader.*.context.pos});
             var evt: Event = undefined;
             while (true) {
-                std.debug.print("asasjas\n", .{});
                 evt = try self.inner.nextEvent();
                 switch (evt.etype) {
                     .MappingStartEvent => {
@@ -180,12 +178,9 @@ pub fn stringLoader(allocator: *Allocator, string: String) !StringLoader {
 
 test "Load String" {
     const string = "name: Bob\nage: 100";
-    std.debug.print("\n\n", .{});
     var buf = std.io.fixedBufferStream(string);
     var reader = buf.reader(); 
-    std.debug.print("Pos: {},    Buf at test: {*}\n", .{reader.context.pos, reader.context.buffer});
     var stringloader = try StringLoader.init(std.testing.allocator, &reader);
-    std.debug.print("Pos: {}      Ptr at test {x}\n", .{reader.context.pos, @ptrToInt(&reader)});
     // defer stringloader.deinit();
     const result = try stringloader.parseDynamic();
     const name = result.Object.get("name").?.Scalar.String;
