@@ -12,7 +12,6 @@ pub fn Parser(comptime Reader: type) type {
     return struct {
         raw: *CParser,
         allocator: *Allocator,
-        _reader: Reader,
 
         const Self = @This();
 
@@ -30,7 +29,6 @@ pub fn Parser(comptime Reader: type) type {
             return Self{
                 .raw = raw,
                 .allocator = allocator,
-                ._reader = reader,
             };
         }
 
@@ -69,7 +67,7 @@ pub fn Parser(comptime Reader: type) type {
                 } },
                 c.YAML_STREAM_END_EVENT => .StreamEndEvent,
                 c.YAML_DOCUMENT_START_EVENT => blk: {
-                    const version = if (raw_event.data.document_start.version_directive) |_ver| common.Version {
+                    const version = if (raw_event.data.document_start.version_directive) |_ver| common.Version{
                         .major = @intCast(u32, _ver.*.major),
                         .minor = @intCast(u32, _ver.*.minor),
                     } else null;

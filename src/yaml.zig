@@ -57,9 +57,9 @@ const Scalar = union(ScalarType) {
         }
     }
     pub fn deinit(self: *@This(), allocator: *Allocator) void {
-        switch(self.*) {
+        switch (self.*) {
             .String => |st| allocator.free(st),
-            else => {}
+            else => {},
         }
     }
 };
@@ -70,25 +70,24 @@ const Node = union(enum) {
     Object: Object,
 
     pub fn deinit(self: *@This(), allocator: *Allocator) void {
-        switch(self.*) {
+        switch (self.*) {
             .Scalar => |*sc| sc.deinit(allocator),
             .List => |*ls| {
-                for(ls.items) |*node| {
+                for (ls.items) |*node| {
                     node.deinit(allocator);
                 }
                 ls.deinit();
             },
             .Object => |*obj| {
                 var iter = obj.iterator();
-                while(iter.next()) |entry| {
+                while (iter.next()) |entry| {
                     var k = entry.key_ptr;
                     var v = entry.value_ptr;
                     allocator.free(k.*);
                     v.deinit(allocator);
                 }
                 obj.deinit();
-            }
-            
+            },
         }
     }
 };
@@ -130,10 +129,10 @@ pub fn Loader(comptime Reader: type) type {
         const Self = @This();
 
         fn init(allocator: *Allocator, reader: Reader) ParserError!Self {
-            var par =  try Parser.init(allocator, reader) ;
+            var par = try Parser.init(allocator, reader);
             errdefer par.deinit();
             var ndlist = List.init(allocator);
-            return Self{ .allocator = allocator, .inner = par, .nodes = ndlist};
+            return Self{ .allocator = allocator, .inner = par, .nodes = ndlist };
         }
         fn parse(self: *Self, command: ?Command) YamlError!Node {
             var state: ?State = if (command) |cmd| switch (cmd) {
@@ -202,12 +201,27 @@ pub fn Loader(comptime Reader: type) type {
         }
         pub fn deinit(self: *Self) void {
             self.inner.deinit();
-            for(self.nodes.items) |*node| {
+            for (self.nodes.items) |*node| {
                 node.deinit(self.allocator);
             }
             self.nodes.deinit();
         }
     };
+}
+
+pub fn Dumper(comptime Writer: type) type {
+    const Emitter = emitter.Emitter(Writer);
+    return {
+        inner: Emitter,
+        writer: 
+
+        const Self = @This();
+        pub fn init(allocator: *Allocator) EmitterError!Self {
+            return { .inner = Emitter.init(allocator) };
+        }
+
+        pub fn dump(self: *Self, )
+    }
 }
 
 pub const StringLoader = Loader(*std.io.FixedBufferStream(String).Reader);
@@ -225,11 +239,11 @@ test "Load String" {
 }
 
 test "Root is List" {
-    const string = 
-    \\- apple
-    \\- pear
-    \\- grapes
-    \\- starfruit
+    const string =
+        \\- apple
+        \\- pear
+        \\- grapes
+        \\- starfruit
     ;
     var buf = std.io.fixedBufferStream(string);
     var stringloader = try StringLoader.init(std.testing.allocator, &buf.reader());
@@ -237,7 +251,7 @@ test "Root is List" {
     const result = try stringloader.parseDynamic();
     try std.testing.expect(result == .List);
     const fruits = result.List;
-    inline for(.{"apple", "pear", "grapes", "starfruit"}) |name, i| {
+    inline for (.{ "apple", "pear", "grapes", "starfruit" }) |name, i| {
         try std.testing.expectEqualStrings(fruits.items[i].Scalar.String, name);
     }
 }

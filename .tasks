@@ -1,0 +1,15 @@
+# vim: set fenc=utf-8 ft=dosini:
+[build]
+command=zig build
+cwd=$(VIM_PWD)
+output=quickfix
+errorformat=%f:%l:%m
+save=1
+
+[run]
+# It's supposed to be a run task but this is a lib, so only testing.
+command=zig build test
+cwd=$(VIM_PWD)
+output=quickfix
+errorformat=%f:%l:%m
+save=1

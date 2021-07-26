@@ -1,6 +1,7 @@
 pub const OOM = Allocator.Error;
 pub const ParserError = error{ ParserInit, AlreadySet, ReadingFailed, ParsingError, InternalError, TypeError } || OOM;
 pub const LoaderError = error{UnexpectedType} || OOM;
+pub const EmitterError = error{OutputFailed, InternalError };
 pub const YamlError = LoaderError || ParserError;
 const Allocator = @import("std").mem.Allocator;
 
@@ -15,9 +16,7 @@ pub const EventType = union(enum) {
     NoEvent: void,
     StreamStartEvent: Encoding,
     StreamEndEvent: void,
-    DocumentStartEvent: struct {
-        version: ?Version
-    },
+    DocumentStartEvent: struct { version: ?Version },
     DocumentEndEvent: void,
     ScalarEvent: struct { value: String },
     SequenceStartEvent: void,
